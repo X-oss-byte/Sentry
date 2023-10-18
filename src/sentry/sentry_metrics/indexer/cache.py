@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import logging
 import random
-from typing import Collection, Iterable, Mapping, MutableMapping, Optional, Sequence, Set
+from datetime import datetime
+from typing import Any, Collection, Iterable, Mapping, MutableMapping, Optional, Sequence, Set
 
 from django.conf import settings
 from django.core.cache import caches
@@ -67,6 +68,9 @@ class StringIndexerCache:
 
         return f"indexer:{self.partition_key}:{namespace}:org:str:{use_case_id}:{hashed}"
 
+    def _make_cache_val(self, val: int, timestamp: int):
+        return f"{val}:{timestamp}"
+
     def _format_results(
         self, keys: Iterable[str], results: Mapping[str, Optional[int]]
     ) -> MutableMapping[str, Optional[int]]:
@@ -105,14 +109,13 @@ class StringIndexerCache:
 
         return formatted
 
-    def _validate_result(self, result: str) -> int:
+    def _validate_result(self, result: Any) -> int | None:
         if result is None:
             return None
         result, _ = result.split(":")
-
         return int(result)
 
-    def get(self, namespace: str, key: str) -> int:
+    def get(self, namespace: str, key: str) -> int | None:
         if options.get("sentry-metrics.indexer.read-new-cache-namespace"):
             result = self.cache.get(
                 self._make_namespaced_cache_key(namespace, key), version=self.version
@@ -127,6 +130,13 @@ class StringIndexerCache:
             timeout=self.randomized_ttl,
             version=self.version,
         )
+        if options.get("sentry-metrics.indexer.write-new-cache-namespace"):
+            self.cache.set(
+                key=self._make_namespaced_cache_key(namespace, key),
+                value=self._make_cache_val(value, int(datetime.utcnow().timestamp())),
+                timeout=self.randomized_ttl,
+                version=self.version,
+            )
 
     def get_many(self, namespace: str, keys: Iterable[str]) -> MutableMapping[str, Optional[int]]:
         if options.get("sentry-metrics.indexer.read-new-cache-namespace"):
@@ -150,14 +160,28 @@ class StringIndexerCache:
     def set_many(self, namespace: str, key_values: Mapping[str, int]) -> None:
         cache_key_values = {self._make_cache_key(k): v for k, v in key_values.items()}
         self.cache.set_many(cache_key_values, timeout=self.randomized_ttl, version=self.version)
+        if options.get("sentry-metrics.indexer.write-new-cache-namespace"):
+            timestamp = int(datetime.utcnow().timestamp())
+            name_sapced_cache_key_values = {
+                self._make_namespaced_cache_key(namespace, k): self._make_cache_val(v, timestamp)
+                for k, v in key_values.items()
+            }
+            self.cache.set_many(
+                name_sapced_cache_key_values, timeout=self.randomized_ttl, version=self.version
+            )
 
     def delete(self, namespace: str, key: str) -> None:
-        cache_key = self._make_cache_key(key)
-        self.cache.delete(cache_key, version=self.version)
+        self.cache.delete(self._make_cache_key(key), version=self.version)
+        if options.get("sentry-metrics.indexer.write-new-cache-namespace"):
+            self.cache.delete(self._make_namespaced_cache_key(namespace, key), version=self.version)
 
     def delete_many(self, namespace: str, keys: Sequence[str]) -> None:
-        cache_keys = [self._make_cache_key(key) for key in keys]
-        self.cache.delete_many(cache_keys, version=self.version)
+        self.cache.delete_many([self._make_cache_key(key) for key in keys], version=self.version)
+        if options.get("sentry-metrics.indexer.write-new-cache-namespace"):
+            self.cache.delete_many(
+                [self._make_namespaced_cache_key(namespace, key) for key in keys],
+                version=self.version,
+            )
 
 
 class CachingIndexer(StringIndexer):
