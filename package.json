@@ -176,7 +176,7 @@
     "@storybook/react": "6.5.9",
     "@storybook/router": "6.5.9",
     "@storybook/theming": "6.5.9",
-    "@types/node": "^18.0.0",
+    "@types/node": "^20.10.3",
     "@visual-snapshot/jest": "6.0.2",
     "assert": "^2.0.0",
     "babel-gettext-extractor": "^4.1.3",
